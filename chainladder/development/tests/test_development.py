@@ -1173,3 +1173,20 @@ def test_loglinear_sigma_tail_capped_at_last_sigma(clrd):
     sigma = cl.Development().fit(tri).sigma_.set_backend("numpy").values.ravel()
     assert np.isclose(sigma[-1], sigma[2])
     assert np.nanmax(sigma) == np.nanmax(sigma[:3])
+
+
+def test_loglinear_sigma_fill_capped_at_max_cv(clrd):
+    # GH 1609: IL State Bar's three positive sigmas start at 60-72, and the
+    # line through them filled 3,341,035 at 24-36. A filled sigma now implies
+    # a link ratio coefficient of variation of at most 10 for an origin with
+    # the mean starting value at that age.
+    tri = clrd["CumPaidLoss"].loc["IL State Bar Assoc Mut Ins Co", "othliab"]
+    dev = cl.Development().fit(tri)
+    sigma = dev.sigma_.set_backend("numpy").values.ravel()
+    ldf = dev.ldf_.set_backend("numpy").values.ravel()
+    values = tri.set_backend("numpy").values[0, 0]
+    start = values[:, 1]
+    start = start[~np.isnan(start) & ~np.isnan(values[:, 2])]
+    assert np.isclose(sigma[1], 10 * ldf[1] * np.sqrt(start.mean()))
+    assert np.isclose(sigma[1], 89.8146, atol=1e-4)
+    assert np.allclose(sigma[4:7], [14.70944, 9.450164, 0.008229885], rtol=1e-6)

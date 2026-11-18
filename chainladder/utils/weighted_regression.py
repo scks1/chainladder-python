@@ -246,10 +246,53 @@ class WeightedRegression(BaseEstimator):
         linear extrapolation where n_obs=1 and sigma cannot be calculated.
         """
         if interpolation == "log-linear":
-            self.sigma_ = self.loglinear_interpolation(self.sigma_)
+            self.sigma_ = self._cap_fill_cv(
+                self.sigma_, self.loglinear_interpolation(self.sigma_)
+            )
         if interpolation == "mack":
             self.sigma_ = self.mack_interpolation(self.sigma_)
         return self
+
+    # Largest coefficient of variation a filled sigma may imply for the link
+    # ratio of an origin with the mean starting value.
+    max_fill_cv = 10.0
+
+    def _cap_fill_cv(self, raw, filled):
+        """
+        Cap each filled sigma at ``max_fill_cv`` times the mean link ratio.
+
+        Under the regression weights, the variance of the next value is
+        ``sigma**2 * x**exponent_``, so a link ratio from a starting value
+        ``x`` has standard deviation ``sigma * x**(exponent_ / 2 - 1)``. The
+        coefficient of variation divides that by the fitted ldf, and ``x`` is
+        the mean starting value over the origins that enter the regression.
+        A filled sigma whose coefficient of variation exceeds
+        ``max_fill_cv`` is lowered to the sigma that gives exactly
+        ``max_fill_cv``. Sigmas computed from the data are left as they are,
+        and so is a fill where the bound is not positive or not defined.
+        """
+        from chainladder.utils.utility_functions import num_to_nan
+
+        xp = self.xp
+        axis = self.axis
+        used = (
+            xp.nan_to_num(self.x * 0 + 1)
+            * xp.nan_to_num(self.y * 0 + 1)
+            * (xp.nan_to_num(self.w) > 0)
+        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            x_mean = num_to_nan(xp.nansum(xp.nan_to_num(self.x) * used, axis)) / (
+                num_to_nan(xp.nansum(used, axis))
+            )
+            exponent = xp.max(xp.nan_to_num(self.exponent_) * used, axis)
+            bound = (
+                self.max_fill_cv * self.slope_ * (x_mean ** (1 - exponent / 2))[..., None]
+            )
+            estimated = xp.nan_to_num(raw * 0 + 1)
+            cap = (estimated == 0) & (xp.nan_to_num(bound) > 0) & (
+                xp.nan_to_num(filled) > xp.nan_to_num(bound)
+            )
+        return xp.where(cap, bound, filled)
 
     def std_err_fill(self):
         """Fill undefined std_err_ where regression has insufficient observations."""
